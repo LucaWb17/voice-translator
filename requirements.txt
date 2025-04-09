@@ -8,7 +8,7 @@ python-dotenv==1.0.0
 # LangChain e OpenAI per le traduzioni
 langchain-openai==0.0.2
 langchain-core==0.1.8
-openai==1.3.5
+openai>=1.6.1,<2.0.0
 
 # ElevenLabs per la sintesi vocale
 elevenlabs==0.2.24
