@@ -9,7 +9,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from elevenlabs import ElevenLabs
+from elevenlabs import set_api_key
 from elevenlabs import play, generate
 import assemblyai as aai
 from langdetect import detect
@@ -70,7 +70,7 @@ def translate(sentence, language):
     return translation_chain.invoke(data_input)
 
 # ElevenLabs
-client = ElevenLabs()
+set_api_key(os.getenv("ELEVEN_API_KEY"))
 
 def gen_dub(text, voice="George"):
     audio = client.generate(
