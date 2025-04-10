@@ -1,7 +1,7 @@
 # Web framework
 flask==2.3.3
 gunicorn==21.2.0
-
+flask-socketio==5.3.2
 # Environment variables
 python-dotenv==1.0.0
 
