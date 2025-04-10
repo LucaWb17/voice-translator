@@ -13,15 +13,13 @@ from deepgram import Deepgram
 from langdetect import detect
 import base64
 import asyncio
-from flask_socketio import SocketIO, emit
-import threading
+from flask_socketio import SocketIO
 
 app = Flask(__name__)
-# Updated to use eventlet for better asynchronous handling
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+socketio = SocketIO(app)
 load_dotenv()
 
-# Global config
+# Config globale
 config = {
     "personA_target_language": "English",
     "personB_target_language": "German",
@@ -42,7 +40,7 @@ available_voices = {
 available_languages = [
     "English", "Italian", "German", "French", 
     "Spanish", "Japanese", "Portuguese", "Russian", 
-    "Chinese", "Arabic", "Hindi", "Dutch","Czech"
+    "Chinese", "Arabic", "Hindi", "Dutch"
 ]
 
 # === GPT setup ===
@@ -87,7 +85,6 @@ deepgram = Deepgram(DEEPGRAM_API_KEY)
 translation_history = []
 mic_handlers = {'A': None, 'B': None}
 
-# Updated MicrophoneHandler class with improved WebSocket handling
 class MicrophoneHandler:
     def __init__(self, persona, target_language, voice):
         self.persona = persona
@@ -96,21 +93,12 @@ class MicrophoneHandler:
         self.active = False
         self.websocket = None
         self.task = None
-        self.loop = None
-    
-    def run_async(self):
-        """Run the async loop in its own thread"""
-        self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self.loop)
-        self.loop.run_until_complete(self.start())
-    
-    async def start(self):
+
+    async def start(self, device_index=None):
         self.active = True
-        print(f"[Mic {self.persona}] Starting microphone handler...")
 
         try:
-            # Configure Deepgram options
-            deepgram_options = {
+            self.websocket = await deepgram.transcription.live({
                 'encoding': 'linear16',
                 'sample_rate': 44100,
                 'channels': 1,
@@ -118,105 +106,55 @@ class MicrophoneHandler:
                 'model': 'nova-2',
                 'smart_format': True,
                 'interim_results': True
-            }
-            
-            # Connect to Deepgram's API
-            self.websocket = await deepgram.transcription.live(deepgram_options)
-            
-            print(f"[Mic {self.persona}] WebSocket connection established")
-            
-            # Set up event handlers for Deepgram WebSocket
-            self.websocket.registerHandler(self.websocket.EVENT_CLOSE, self._on_close)
-            self.websocket.registerHandler(self.websocket.EVENT_ERROR, self._on_error)
-            self.websocket.registerHandler(self.websocket.EVENT_TRANSCRIPT_RECEIVED, self._on_transcript)
+            })
 
-            # Keep the connection alive until stopped
-            while self.active:
-                await asyncio.sleep(0.5)
-                
-        except Exception as e:
-            print(f"[Mic {self.persona}] ❌ ERROR establishing connection: {str(e)}")
-            self.active = False
-            
-            # Try to reconnect
-            if self.active:
-                await asyncio.sleep(2)
-                await self.start()
-
-    async def _on_close(self):
-        """Handle WebSocket close event"""
-        print(f"[Mic {self.persona}] WebSocket closed")
-        if self.active:
-            await asyncio.sleep(2)  # Wait before reconnecting
-            await self.start()
-
-    async def _on_error(self, error):
-        """Handle WebSocket error event"""
-        print(f"[Mic {self.persona}] WebSocket error: {str(error)}")
-        # Errors are usually followed by connection close, so we'll reconnect in the _on_close handler
-
-    async def _on_transcript(self, transcript):
-        """Process transcript data from Deepgram"""
-        try:
-            if 'channel' in transcript and 'alternatives' in transcript['channel'] and transcript['channel']['alternatives']:
-                transcript_text = transcript['channel']['alternatives'][0]['transcript']
-                
-                if transcript_text:
+            async def handle_transcription():
+                while self.active:
                     try:
-                        detected_lang = detect(transcript_text)
-                    except:
-                        detected_lang = "unknown"
+                        message = await self.websocket.receive()
+                        data = json.loads(message)
 
-                    print(f"[Mic {self.persona}] Detected text: {transcript_text}")
-                    
-                    # Translate the text
-                    translation = translate(transcript_text, self.target_language)
-                    print(f"[Mic {self.persona}] Translated to: {translation}")
-                    
-                    # Generate audio for the translation
-                    audio = gen_dub(translation, voice=self.voice)
-                    audio_b64 = base64.b64encode(audio).decode('utf-8')
+                        if 'channel' in data and 'alternatives' in data['channel']:
+                            transcript = data['channel']['alternatives'][0]['transcript']
+                            if transcript:
+                                try:
+                                    detected_lang = detect(transcript)
+                                except:
+                                    detected_lang = "unknown"
 
-                    # Create a new entry for the translation history
-                    new_entry = {
-                        "timestamp": time.time(),
-                        "persona": self.persona,
-                        "original_text": transcript_text,
-                        "detected_language": detected_lang,
-                        "translated_text": translation,
-                        "target_language": self.target_language,
-                        "voice": self.voice,
-                        "audio_b64": audio_b64
-                    }
-                    
-                    # Add to history and emit to clients
-                    translation_history.append(new_entry)
-                    if len(translation_history) > 50:
-                        translation_history.pop(0)
-                    
-                    socketio.emit('new_translation', new_entry)
+                                translation = translate(transcript, self.target_language)
+                                audio = gen_dub(translation, voice=self.voice)
+                                audio_b64 = base64.b64encode(audio).decode('utf-8')
+
+                                translation_history.append({
+                                    "timestamp": time.time(),
+                                    "persona": self.persona,
+                                    "original_text": transcript,
+                                    "detected_language": detected_lang,
+                                    "translated_text": translation,
+                                    "target_language": self.target_language,
+                                    "voice": self.voice,
+                                    "audio_b64": audio_b64
+                                })
+
+                                if len(translation_history) > 50:
+                                    translation_history.pop(0)
+
+                    except Exception as e:
+                        print(f"[Mic {self.persona}] ❌ ERROR: {str(e)}")
+
+            self.task = asyncio.gather(handle_transcription())
+
         except Exception as e:
-            print(f"[Mic {self.persona}] Error processing transcript: {str(e)}")
-
-    async def send_audio(self, audio_data):
-        """Send audio data to Deepgram"""
-        if self.websocket and self.active:
-            try:
-                await self.websocket.send(audio_data)
-            except Exception as e:
-                print(f"[Mic {self.persona}] Error sending audio: {str(e)}")
+            print(f"[Mic {self.persona}] ❌ ERROR: {str(e)}")
+            self.active = False
 
     async def stop(self):
-        """Stop the microphone handler gracefully"""
-        print(f"[Mic {self.persona}] Stopping microphone handler...")
         self.active = False
-        
         if self.websocket:
-            try:
-                await self.websocket.finish()
-                print(f"[Mic {self.persona}] WebSocket closed")
-            except Exception as e:
-                print(f"[Mic {self.persona}] Error closing WebSocket: {str(e)}")
+            await self.websocket.close()
+        if self.task:
+            self.task.cancel()
 
 @app.route('/')
 def index():
@@ -237,71 +175,59 @@ def api_config():
     else:
         return jsonify(config)
 
-# Updated session management functions
 @app.route('/api/start_session', methods=['POST'])
 def start_session():
     global config, mic_handlers
-    
+
     if config['session_active']:
         return jsonify({"status": "error", "message": "Session already active"})
 
-    # Clear translation history
     translation_history.clear()
-    
+
     try:
-        # Create the microphone handlers
         mic_handlers['A'] = MicrophoneHandler(
             persona='A',
             target_language=config['personB_target_language'],
             voice=config['voiceB']
         )
-        
         mic_handlers['B'] = MicrophoneHandler(
             persona='B',
             target_language=config['personA_target_language'],
             voice=config['voiceA']
         )
-        
-        # Start the handlers in their own threads
-        for persona in ['A', 'B']:
-            thread = threading.Thread(
-                target=mic_handlers[persona].run_async, 
-                daemon=True
-            )
-            thread.start()
-        
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(mic_handlers['A'].start(device_index=0))
+        loop.run_until_complete(mic_handlers['B'].start(device_index=1))
+
         config['session_active'] = True
         return jsonify({"status": "success", "message": "Translation session started"})
 
     except Exception as e:
-        print(f"Error starting session: {str(e)}")
         return jsonify({"status": "error", "message": str(e)})
 
 @app.route('/api/stop_session', methods=['POST'])
 def stop_session():
     global config, mic_handlers
-    
+
     if not config['session_active']:
         return jsonify({"status": "error", "message": "No active session"})
 
     try:
-        # Stop the microphone handlers
-        for persona in ['A', 'B']:
-            if mic_handlers[persona] and mic_handlers[persona].loop:
-                # Schedule stop in the handler's own event loop
-                asyncio.run_coroutine_threadsafe(
-                    mic_handlers[persona].stop(), 
-                    mic_handlers[persona].loop
-                )
-        
-        # Reset handlers
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        if mic_handlers['A']:
+            loop.run_until_complete(mic_handlers['A'].stop())
+        if mic_handlers['B']:
+            loop.run_until_complete(mic_handlers['B'].stop())
+
         mic_handlers = {'A': None, 'B': None}
         config['session_active'] = False
-        
+
         return jsonify({"status": "success", "message": "Translation session stopped"})
 
     except Exception as e:
-        print(f"Error stopping session: {str(e)}")
         return jsonify({"status": "error", "message": str(e)})
 
 @app.route('/api/translation_history')
@@ -326,29 +252,11 @@ def handle_connect():
 def handle_disconnect():
     print('Client disconnected')
 
-# Updated audio handler for Socket.IO
 @socketio.on('audio')
 def handle_audio(data):
-    """Handle audio data received from the client"""
-    global mic_handlers, config
-    
-    if not config['session_active']:
-        return
-    
-    try:
-        # For simplicity, we're routing all audio through persona A's handler
-        # You could add logic to determine which persona based on client ID
-        persona = 'A'
-        
-        if mic_handlers[persona] and mic_handlers[persona].active:
-            # Schedule the audio data to be sent to Deepgram
-            asyncio.run_coroutine_threadsafe(
-                mic_handlers[persona].send_audio(data), 
-                mic_handlers[persona].loop
-            )
-    except Exception as e:
-        print(f"Error handling audio from client: {str(e)}")
+    # Processa i dati audio ricevuti
+    pass
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    socketio.run(app, host='0.0.0.0', port=port, debug=True)
+    socketio.run(app, host='0.0.0.0', port=port)
