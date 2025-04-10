@@ -9,11 +9,13 @@ from langchain_openai import ChatOpenAI
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from elevenlabs import set_api_key
+from elevenlabs.client import ElevenLabs
 from elevenlabs import play, generate
-import assemblyai as aai
+from deepgram import Deepgram
 from langdetect import detect
 import base64
+import asyncio
+import websockets
 
 app = Flask(__name__)
 load_dotenv()
@@ -41,7 +43,7 @@ available_voices = {
 available_languages = [
     "English", "Italian", "German", "French", 
     "Spanish", "Japanese", "Portuguese", "Russian", 
-    "Chinese", "Arabic", "Hindi", "Dutch", "Czech"
+    "Chinese", "Arabic", "Hindi", "Dutch"
 ]
 
 # === GPT setup ===
@@ -52,7 +54,6 @@ Sentence: {sentence}
 """
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-ASSEMBLYAI_API_KEY = os.getenv("ASSEMBLYAI_API_KEY")
 
 output_parser = StrOutputParser()
 llm = ChatOpenAI(temperature=0.0, model="gpt-4-turbo", openai_api_key=OPENAI_API_KEY) 
@@ -70,7 +71,7 @@ def translate(sentence, language):
     return translation_chain.invoke(data_input)
 
 # ElevenLabs
-set_api_key(os.getenv("ELEVEN_API_KEY"))
+client = ElevenLabs()
 
 def gen_dub(text, voice="George"):
     audio = client.generate(
@@ -80,8 +81,9 @@ def gen_dub(text, voice="George"):
     )
     return audio
 
-# AssemblyAI
-aai.settings.api_key = ASSEMBLYAI_API_KEY
+# Deepgram setup
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
+deepgram = Deepgram(DEEPGRAM_API_KEY)
 
 # Global list to store translation history
 translation_history = []
@@ -95,78 +97,76 @@ class MicrophoneHandler:
         self.target_language = target_language
         self.voice = voice
         self.active = False
-        self.transcriber = None
+        self.websocket = None
         self.thread = None
     
-    def start(self, device_index=None):
+    async def start(self, device_index=None):
         self.active = True
         
-        def on_open(session_opened: aai.RealtimeSessionOpened):
-            print(f"[Mic {self.persona}] ✅ Session started - ID: {session_opened.session_id}")
-        
-        def on_data(transcript: aai.RealtimeTranscript):
-            if not transcript.text or not self.active:
-                return
+        try:
+            # Inizializza la connessione WebSocket con Deepgram
+            self.websocket = await deepgram.transcription.live({
+                'encoding': 'linear16',
+                'sample_rate': 44100,
+                'channels': 1,
+                'language': 'auto',
+                'model': 'nova-2',
+                'smart_format': True,
+                'interim_results': True
+            })
             
-            if isinstance(transcript, aai.RealtimeFinalTranscript):
-                try:
-                    detected_lang = detect(transcript.text)
-                except:
-                    detected_lang = "unknown"
-                
-                translation = translate(transcript.text, self.target_language)
-                audio = gen_dub(translation, voice=self.voice)
-                audio_b64 = base64.b64encode(audio).decode('utf-8')
-                
-                translation_entry = {
-                    "timestamp": time.time(),
-                    "persona": self.persona,
-                    "original_text": transcript.text,
-                    "detected_language": detected_lang,
-                    "translated_text": translation,
-                    "target_language": self.target_language,
-                    "voice": self.voice,
-                    "audio_b64": audio_b64
-                }
-                
-                translation_history.append(translation_entry)
-                # Keep only last 50 translations
-                if len(translation_history) > 50:
-                    translation_history.pop(0)
-        
-        def on_error(error: aai.RealtimeError):
-            print(f"[Mic {self.persona}] ❌ ERROR: {error}")
-        
-        def on_close():
-            print(f"[Mic {self.persona}] 🔒 Session closed.")
-        
-        def run_transcriber():
-            self.transcriber = aai.RealtimeTranscriber(
-                sample_rate=44_100,
-                on_data=on_data,
-                on_error=on_error,
-                on_open=on_open,
-                on_close=on_close,
-                device_index=device_index
-            )
+            async def handle_transcription():
+                while self.active:
+                    try:
+                        message = await self.websocket.receive()
+                        data = json.loads(message)
+                        
+                        if 'channel' in data and 'alternatives' in data['channel']:
+                            transcript = data['channel']['alternatives'][0]['transcript']
+                            
+                            if transcript and self.active:
+                                try:
+                                    detected_lang = detect(transcript)
+                                except:
+                                    detected_lang = "unknown"
+                                
+                                translation = translate(transcript, self.target_language)
+                                audio = gen_dub(translation, voice=self.voice)
+                                audio_b64 = base64.b64encode(audio).decode('utf-8')
+                                
+                                translation_entry = {
+                                    "timestamp": time.time(),
+                                    "persona": self.persona,
+                                    "original_text": transcript,
+                                    "detected_language": detected_lang,
+                                    "translated_text": translation,
+                                    "target_language": self.target_language,
+                                    "voice": self.voice,
+                                    "audio_b64": audio_b64
+                                }
+                                
+                                translation_history.append(translation_entry)
+                                if len(translation_history) > 50:
+                                    translation_history.pop(0)
+                    
+                    except websockets.exceptions.ConnectionClosed:
+                        break
+                    except Exception as e:
+                        print(f"[Mic {self.persona}] ❌ ERROR: {str(e)}")
             
-            self.transcriber.connect()
-            mic_stream = aai.extras.MicrophoneStream(device_index=device_index)
-            self.transcriber.stream(mic_stream)
+            # Avvia il loop di gestione della trascrizione
+            self.thread = asyncio.create_task(handle_transcription())
             
-            while self.active:
-                time.sleep(0.1)
-            
-            self.transcriber.close()
-        
-        self.thread = threading.Thread(target=run_transcriber)
-        self.thread.start()
+        except Exception as e:
+            print(f"[Mic {self.persona}] ❌ ERROR: {str(e)}")
+            self.active = False
     
-    def stop(self):
+    async def stop(self):
         self.active = False
+        if self.websocket:
+            await self.websocket.close()
         if self.thread:
-            self.thread.join(timeout=2)
-        self.thread = None
+            await self.thread
 
 @app.route('/')
 def index():
@@ -194,11 +194,10 @@ def start_session():
     if config['session_active']:
         return jsonify({"status": "error", "message": "Session already active"})
     
-    # Clear previous history
     translation_history.clear()
     
     try:
-        # Create and start microphone handlers
+        # Creazione dei gestori del microfono
         mic_handlers['A'] = MicrophoneHandler(
             persona='A',
             target_language=config['personB_target_language'],
@@ -211,9 +210,11 @@ def start_session():
             voice=config['voiceA']
         )
         
-        # Start with device indices
-        mic_handlers['A'].start(device_index=0)
-        mic_handlers['B'].start(device_index=1)
+        # Avvio delle sessioni in modo asincrono
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(mic_handlers['A'].start(device_index=0))
+        loop.run_until_complete(mic_handlers['B'].start(device_index=1))
         
         config['session_active'] = True
         return jsonify({"status": "success", "message": "Translation session started"})
@@ -229,11 +230,13 @@ def stop_session():
         return jsonify({"status": "error", "message": "No active session"})
     
     try:
-        # Stop microphone handlers
+        # Ferma i gestori del microfono in modo asincrono
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         if mic_handlers['A']:
-            mic_handlers['A'].stop()
+            loop.run_until_complete(mic_handlers['A'].stop())
         if mic_handlers['B']:
-            mic_handlers['B'].stop()
+            loop.run_until_complete(mic_handlers['B'].stop())
         
         mic_handlers = {'A': None, 'B': None}
         config['session_active'] = False
