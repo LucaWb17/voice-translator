@@ -231,6 +231,9 @@ function initializeSocket() {
 }
 
 // Initialize audio recording
+// In index.html - JavaScript section
+
+// Create a proper audio processor that converts to the right format
 async function initializeAudio() {
     try {
         // Request microphone access
@@ -241,6 +244,56 @@ async function initializeAudio() {
                 autoGainControl: true
             }
         });
+        
+        console.log('Microphone access granted');
+        
+        // Create audio context
+        audioContext = new (window.AudioContext || window.webkitAudioContext)({
+            sampleRate: 44100  // Match the sample rate with Deepgram
+        });
+        
+        // Create audio processor
+        const source = audioContext.createMediaStreamSource(mediaStream);
+        const processor = audioContext.createScriptProcessor(4096, 1, 1);
+        
+        // Process audio to send to server
+        processor.onaudioprocess = function(e) {
+            if (!activeSession || !socket || !socket.connected) return;
+            
+            // Get audio data
+            const inputData = e.inputBuffer.getChannelData(0);
+            
+            // Convert to 16-bit PCM (linear16)
+            const pcmData = convertFloat32ToInt16(inputData);
+            
+            // Send to server
+            socket.emit('audio', pcmData.buffer);
+        };
+        
+        // Connect the processor
+        source.connect(processor);
+        processor.connect(audioContext.destination);
+        
+        console.log('Audio processor initialized');
+        
+    } catch (error) {
+        console.error('Error initializing audio:', error);
+        alert('Failed to access your microphone. Please check your browser permissions.');
+    }
+}
+
+// Helper function to convert audio format
+function convertFloat32ToInt16(buffer) {
+    const l = buffer.length;
+    const buf = new Int16Array(l);
+    
+    for (let i = 0; i < l; i++) {
+        // Convert from [-1,1] to [-32768,32767]
+        buf[i] = Math.min(1, Math.max(-1, buffer[i])) * 0x7FFF;
+    }
+    
+    return buf;
+}
         
         console.log('Microphone access granted');
         
