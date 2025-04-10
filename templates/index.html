@@ -230,10 +230,7 @@ function initializeSocket() {
     });
 }
 
-// Initialize audio recording
-// In index.html - JavaScript section
-
-// Create a proper audio processor that converts to the right format
+// Initialize audio recording with the new improved processing code
 async function initializeAudio() {
     try {
         // Request microphone access
@@ -293,39 +290,6 @@ function convertFloat32ToInt16(buffer) {
     }
     
     return buf;
-}
-        
-        console.log('Microphone access granted');
-        
-        // Create audio context
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        
-        // Create media recorder with appropriate MIME type and settings
-        let options = {};
-        if (MediaRecorder.isTypeSupported('audio/webm')) {
-            options = { mimeType: 'audio/webm' };
-        } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-            options = { mimeType: 'audio/mp4' };
-        }
-        
-        mediaRecorder = new MediaRecorder(mediaStream, options);
-        
-        // Handle recorded data
-        mediaRecorder.ondataavailable = (event) => {
-            if (event.data.size > 0 && socket && socket.connected && activeSession) {
-                // Convert Blob to ArrayBuffer for transmission
-                event.data.arrayBuffer().then(buffer => {
-                    socket.emit('audio', buffer);
-                });
-            }
-        };
-        
-        console.log('MediaRecorder initialized');
-        
-    } catch (error) {
-        console.error('Error initializing audio:', error);
-        alert('Failed to access your microphone. Please check your browser permissions.');
-    }
 }
 
 // Event listeners for language changes
@@ -403,19 +367,19 @@ function saveConfig() {
     });
 }
 
-// Start/stop recording functions
+// Start/stop recording functions - we're no longer using MediaRecorder API
 function startRecording() {
-    if (mediaRecorder && mediaRecorder.state !== 'recording') {
-        mediaRecorder.start(250); // Send data every 250ms
-        console.log('Started recording');
+    if (audioContext && audioContext.state === 'suspended') {
+        audioContext.resume();
     }
+    console.log('Started audio processing');
 }
 
 function stopRecording() {
-    if (mediaRecorder && mediaRecorder.state === 'recording') {
-        mediaRecorder.stop();
-        console.log('Stopped recording');
+    if (audioContext && audioContext.state === 'running') {
+        audioContext.suspend();
     }
+    console.log('Stopped audio processing');
 }
 
 // Event listeners for start/stop buttons
@@ -597,7 +561,7 @@ async function init() {
 var voiceOptions = JSON.parse('{{ available_voices|tojson|safe }}');
 
 // Start initialization when page loads
-window.addEventListener('load', init);
+window.addEventListener('load', init););
     </script>
 </body>
 </html>
