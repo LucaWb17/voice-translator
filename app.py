@@ -13,7 +13,6 @@ from deepgram import Deepgram
 from langdetect import detect
 import base64
 import asyncio
-import sounddevice as sd
 from flask_socketio import SocketIO
 
 app = Flask(__name__)
@@ -109,17 +108,6 @@ class MicrophoneHandler:
                 'interim_results': True
             })
 
-            async def stream_audio():
-                def callback(indata, frames, time, status):
-                    if status:
-                        print(status)
-                    if self.active:
-                        asyncio.run_coroutine_threadsafe(self.websocket.send(indata), asyncio.get_event_loop())
-
-                with sd.InputStream(samplerate=44100, channels=1, callback=callback, device=device_index):
-                    while self.active:
-                        sd.sleep(1000)
-
             async def handle_transcription():
                 while self.active:
                     try:
@@ -155,7 +143,7 @@ class MicrophoneHandler:
                     except Exception as e:
                         print(f"[Mic {self.persona}] ❌ ERROR: {str(e)}")
 
-            self.task = asyncio.gather(stream_audio(), handle_transcription())
+            self.task = asyncio.gather(handle_transcription())
 
         except Exception as e:
             print(f"[Mic {self.persona}] ❌ ERROR: {str(e)}")
