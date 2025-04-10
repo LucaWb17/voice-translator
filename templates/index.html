@@ -175,7 +175,7 @@
         // Global variables
         let activeSession = false;
         let lastTimestamp = 0;
-        let voiceOptions = {{ available_voices|tojson }};
+        let voiceOptions = {{ available_voices|tojson|safe }};
 
         // DOM elements
         const startButton = document.getElementById('startButton');
@@ -361,62 +361,69 @@
                 });
         }
 
+        let socket = io.connect('http://localhost:5000');
+        let mediaRecorder;
 
+        navigator.mediaDevices.getUserMedia({ audio: true })
+            .then(stream => {
+                mediaRecorder = new MediaRecorder(stream);
+                mediaRecorder.ondataavailable = event => {
+                    if (event.data.size > 0 && socket.connected) {
+                        socket.emit('audio', event.data);
+                    }
+                };
+                mediaRecorder.start(100); // Invia dati audio ogni 100ms
+            })
+            .catch(error => console.error('Error accessing media devices.', error));
 
-    const recognition = window.SpeechRecognition || window.webkitSpeechRecognition ? new (window.SpeechRecognition || window.webkitSpeechRecognition)() : null;
+        const recognition = window.SpeechRecognition || window.webkitSpeechRecognition ? new (window.SpeechRecognition || window.webkitSpeechRecognition)() : null;
 
-    if (!recognition) {
-        alert("Il tuo browser non supporta la Web Speech API.");
-    } else {
-        recognition.continuous = true;
-        recognition.interimResults = false;
-        recognition.lang = "it-IT"; // puoi cambiarla dinamicamente
+        if (!recognition) {
+            alert("Il tuo browser non supporta la Web Speech API.");
+        } else {
+            recognition.continuous = true;
+            recognition.interimResults = false;
+            recognition.lang = "it-IT"; // puoi cambiarla dinamicamente
 
-        recognition.onresult = (event) => {
-            const transcript = event.results[event.results.length - 1][0].transcript.trim();
-            console.log("Riconosciuto:", transcript);
-            // Qui puoi mandarlo al server per traduzione
-            speakText(transcript, 'A'); // o 'B' a seconda di chi parla
-        };
+            recognition.onresult = (event) => {
+                const transcript = event.results[event.results.length - 1][0].transcript.trim();
+                console.log("Riconosciuto:", transcript);
+                // Qui puoi mandarlo al server per traduzione
+                speakText(transcript, 'A'); // o 'B' a seconda di chi parla
+            };
 
-        recognition.onerror = (event) => {
-            console.error("Errore di riconoscimento:", event.error);
-        };
-    }
+            recognition.onerror = (event) => {
+                console.error("Errore di riconoscimento:", event.error);
+            };
+        }
 
-    function startRecognition() {
-        if (recognition) recognition.start();
-    }
+        function startRecognition() {
+            if (recognition) recognition.start();
+        }
 
-    function stopRecognition() {
-        if (recognition) recognition.stop();
-    }
+        function stopRecognition() {
+            if (recognition) recognition.stop();
+        }
 
-    function speakText(text, persona) {
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.lang = persona === 'A' ? personB_language.value : personA_language.value;
-        utterance.voice = speechSynthesis.getVoices().find(voice =>
-            voice.name === (persona === 'A' ? voiceB.value : voiceA.value)
-        ) || null;
-        speechSynthesis.speak(utterance);
-    }
+        function speakText(text, persona) {
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = persona === 'A' ? personB_language.value : personA_language.value;
+            utterance.voice = speechSynthesis.getVoices().find(voice =>
+                voice.name === (persona === 'A' ? voiceB.value : voiceA.value)
+            ) || null;
+            speechSynthesis.speak(utterance);
+        }
 
-    // Avvia anche il riconoscimento quando clicchi "Avvia"
-    startButton.addEventListener('click', () => {
-        startRecognition();
-    });
+        // Avvia anche il riconoscimento quando clicchi "Avvia"
+        startButton.addEventListener('click', () => {
+            startRecognition();
+        });
 
-    // Ferma il riconoscimento quando clicchi "Ferma"
-    stopButton.addEventListener('click', () => {
-        stopRecognition();
-    });
+        // Ferma il riconoscimento quando clicchi "Ferma"
+        stopButton.addEventListener('click', () => {
+            stopRecognition();
+        });
 
-
-
-
-        
-
-        
         // Add a translation entry to the history display
         function addTranslationToHistory(entry) {
             const card = document.createElement('div');
