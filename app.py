@@ -14,6 +14,7 @@ from deepgram import Deepgram
 from langdetect import detect
 import base64
 import asyncio
+import pyaudio
 import websockets
 
 app = Flask(__name__)
