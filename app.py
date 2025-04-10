@@ -14,8 +14,10 @@ from langdetect import detect
 import base64
 import asyncio
 import sounddevice as sd
+from flask_socketio import SocketIO
 
 app = Flask(__name__)
+socketio = SocketIO(app)
 load_dotenv()
 
 # Config globale
@@ -254,6 +256,19 @@ def get_languages():
 def get_voices():
     return jsonify(available_voices)
 
+@socketio.on('connect')
+def handle_connect():
+    print('Client connected')
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    print('Client disconnected')
+
+@socketio.on('audio')
+def handle_audio(data):
+    # Processa i dati audio ricevuti
+    pass
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    socketio.run(app, host='0.0.0.0', port=port)
