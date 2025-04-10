@@ -113,6 +113,65 @@ class MicrophoneHandler:
                 'smart_format': True,
                 'interim_results': True
             })
+
+             # Funzione per catturare l'audio e inviarlo al WebSocket
+        async def stream_audio():
+            p = pyaudio.PyAudio()
+            # Apre il flusso del microfono
+            stream = p.open(
+                format=pyaudio.paInt16,
+                channels=1,
+                rate=44100,
+                input=True,
+                frames_per_buffer=1024,
+                input_device_index=device_index  # se hai un dispositivo specifico, altrimenti lascialo vuoto
+            )
+            
+            while self.active:
+                data = stream.read(1024, exception_on_overflow=False)  # Leggi l'audio dal microfono
+                await self.websocket.send(data)  # Invia l'audio al WebSocket
+
+        # Funzione per gestire la trascrizione dal WebSocket
+        async def handle_transcription():
+            while self.active:
+                try:
+                    message = await self.websocket.receive()  # Aspetta la risposta dal WebSocket
+                    data = json.loads(message)
+                    
+                    if 'channel' in data and 'alternatives' in data['channel']:
+                        transcript = data['channel']['alternatives'][0]['transcript']  # Prendi la trascrizione
+
+                        if transcript:
+                            # Traduci il testo ricevuto
+                            detected_lang = detect(transcript)
+                            translation = translate(transcript, self.target_language)
+                            audio = gen_dub(translation, voice=self.voice)
+                            audio_b64 = base64.b64encode(audio).decode('utf-8')
+
+                            # Salva la traduzione nella cronologia
+                            translation_entry = {
+                                "timestamp": time.time(),
+                                "persona": self.persona,
+                                "original_text": transcript,
+                                "detected_language": detected_lang,
+                                "translated_text": translation,
+                                "target_language": self.target_language,
+                                "voice": self.voice,
+                                "audio_b64": audio_b64
+                            }
+                            translation_history.append(translation_entry)
+                            if len(translation_history) > 50:
+                                translation_history.pop(0)
+
+                except Exception as e:
+                    print(f"[Mic {self.persona}] ❌ ERROR: {str(e)}")
+
+        # Avvia entrambe le coroutine in parallelo
+        self.thread = asyncio.gather(stream_audio(), handle_transcription())
+    
+    except Exception as e:
+        print(f"[Mic {self.persona}] ❌ ERROR: {str(e)}")
+        self.active = False
             
             async def handle_transcription():
                 while self.active:
