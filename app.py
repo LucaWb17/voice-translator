@@ -42,7 +42,7 @@ available_voices = {
 available_languages = [
     "English", "Italian", "German", "French", 
     "Spanish", "Japanese", "Portuguese", "Russian", 
-    "Chinese", "Arabic", "Hindi", "Dutch"
+    "Chinese", "Arabic", "Hindi", "Dutch","Czech"
 ]
 
 # === GPT setup ===
