@@ -175,7 +175,8 @@
         // Global variables
         let activeSession = false;
         let lastTimestamp = 0;
-        var voiceOptions = JSON.parse('{{ available_voices|tojson|safe }}');
+        let socket = io.connect('http://localhost:5000');
+        let mediaRecorder;
 
         // DOM elements
         const startButton = document.getElementById('startButton');
@@ -361,9 +362,6 @@
                 });
         }
 
-        let socket = io.connect('http://localhost:5000');
-        let mediaRecorder;
-
         navigator.mediaDevices.getUserMedia({ audio: true })
             .then(stream => {
                 mediaRecorder = new MediaRecorder(stream);
@@ -375,6 +373,8 @@
                 mediaRecorder.start(100); // Invia dati audio ogni 100ms
             })
             .catch(error => console.error('Error accessing media devices.', error));
+
+        var voiceOptions = JSON.parse('{{ available_voices|tojson|safe }}');
 
         const recognition = window.SpeechRecognition || window.webkitSpeechRecognition ? new (window.SpeechRecognition || window.webkitSpeechRecognition)() : null;
 
