@@ -9,8 +9,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from elevenlabs.client import ElevenLabs
-from elevenlabs import play, generate
+from elevenlabs import set_api_key, generate, play
 from deepgram import Deepgram
 from langdetect import detect
 import base64
@@ -71,10 +70,10 @@ def translate(sentence, language):
     return translation_chain.invoke(data_input)
 
 # ElevenLabs
-client = ElevenLabs()
+set_api_key(os.getenv("ELEVEN_API_KEY"))
 
 def gen_dub(text, voice="George"):
-    audio = client.generate(
+    audio = generate(
         text=text,
         voice=voice,
         model="eleven_multilingual_v2"
