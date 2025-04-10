@@ -175,7 +175,7 @@
         // Global variables
         let activeSession = false;
         let lastTimestamp = 0;
-        let voiceOptions = {{ available_voices|tojson|safe }};
+        var voiceOptions = JSON.parse('{{ available_voices|tojson|safe }}');
 
         // DOM elements
         const startButton = document.getElementById('startButton');
